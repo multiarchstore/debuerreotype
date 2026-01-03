@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
-# Install lingmo-archive-keyring package
-wget -O /tmp/lingmo-archive-keyring.deb https://packages-lingmo.simplelinux.cn.eu.org/lingmo-archive/rolling/hydrogen/pool/main/l/lingmo-archive-keyring/lingmo-archive-keyring_2024.8.0+fix1_all.deb
-apt-get install -y /tmp/lingmo-archive-keyring.deb
-rm /tmp/lingmo-archive-keyring.deb
+SCRIPT_DIR=$(cd "$(dirname $0)";pwd)
+
+# Install loongnix-archive-keyring
+cp -v $SCRIPT_DIR/../gpg/loongnix-archive-keyring.gpg /usr/share/keyrings/
 
 debuerreotypeScriptsDir="$(which debuerreotype-init)"
 debuerreotypeScriptsDir="$(readlink -vf "$debuerreotypeScriptsDir")"
@@ -43,7 +43,7 @@ exportDir="$tmpDir/output"
 archDir="$exportDir/$(date +"%Y%m%d")/$dpkgArch"
 tmpOutputDir="$archDir/$suite"
 
-mirror='https://packages.lingmo.org/packages'
+mirror='http://pkg.loongnix.cn/loongnix/25'
 
 initArgs=(
 	--arch "$dpkgArch"
@@ -52,11 +52,11 @@ initArgs=(
 
 export GNUPGHOME="$tmpDir/gnupg"
 mkdir -p "$GNUPGHOME"
-keyring='/usr/share/keyrings/lingmo-archive-keyring.gpg'
+keyring='/usr/share/keyrings/loongnix-archive-keyring.gpg'
 if [ ! -s "$keyring" ]; then
 	# since we're using mirrors, we ought to be more explicit about download verification
-	keyUrl='https://packages.lingmo.org/packages/key/lingmo-key.gpg.key'
-	keyring="$tmpDir/lingmo-archive-keyring.gpg"
+	keyUrl='https://keys.openpgp.org/vks/v1/by-fingerprint/D1B8F4D3241F015CACF733D3A8C7C20CEDF1B817'
+	keyring="$tmpDir/loongnix-archive-keyring.gpg"
 	wget -O "$keyring.asc" "$keyUrl"
 	gpg --batch --no-default-keyring --keyring "$keyring" --import "$keyring.asc"
 	rm -f "$keyring.asc"
@@ -112,17 +112,15 @@ esac
 apt update
 apt install -y sudo debootstrap
 
-cp -v  /usr/share/debootstrap/scripts/sid /usr/share/debootstrap/scripts/hydrogen
+cp -v  /usr/share/debootstrap/scripts/sid /usr/share/debootstrap/scripts/loongnix-stable
 
 rootfsDir="$tmpDir/rootfs"
 debuerreotype-init "${initArgs[@]}" "$rootfsDir" "$suite" "$mirror"
 
 debuerreotype-minimizing-config "$rootfsDir"
 
-# Add lingmo-rolling repo & install keyring package
-echo "deb [trusted=yes] https://packages-lingmo.simplelinux.cn.eu.org/lingmo-archive/rolling/hydrogen hydrogen main contrib non-free" > "$rootfsDir/etc/apt/sources.list.d/lingmo_rolling_pkg.list"
-debuerreotype-apt-get "$rootfsDir" update -qq
-debuerreotype-apt-get "$rootfsDir" install lingmo-archive-keyring
+# Add loongnix security repo
+echo "deb http://pkg.loongnix.cn/loongnix/25/ loongnix-security main contrib non-free" > "$rootfsDir/etc/apt/sources.list.d/loongnix-25-security.list"
 
 # TODO do we need to update sources.list here? (security?)
 debuerreotype-apt-get "$rootfsDir" update -qq

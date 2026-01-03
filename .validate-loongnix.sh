@@ -18,7 +18,7 @@ mkdir -p validate
 set -x
 
 ./scripts/debuerreotype-version
-./docker-run.sh --pull ./examples/lingmoos.sh "${buildArgs[@]}"
+./docker-run.sh --pull ./examples/loongnix.sh "${buildArgs[@]}"
 
 real="$(sha256sum "$checkFile" | cut -d' ' -f1)"
 [ -z "$SHA256" ] || [ "$SHA256" = "$real" ]
