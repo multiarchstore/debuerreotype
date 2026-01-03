@@ -88,7 +88,7 @@ second_stage_install () {
     x_hack_avoid_postinst_init
 
     mv "$TARGET/sbin/start-stop-daemon" "$TARGET/sbin/start-stop-daemon.REAL"
-    cp "$TARGET/bin/true" "$TARGET/sbin/start-stop-daemon"
+    cp "$TARGET/usr/bin/true" "$TARGET/sbin/start-stop-daemon"
 
     setup_dselect_method apt
 
