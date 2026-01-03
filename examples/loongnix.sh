@@ -37,7 +37,7 @@ trap "$(printf 'rm -rf %q' "$tmpDir")" EXIT
 
 export TZ='UTC' LC_ALL='C'
 
-dpkgArch='amd64'
+dpkgArch='loong64'
 
 exportDir="$tmpDir/output"
 archDir="$exportDir/$(date +"%Y%m%d")/$dpkgArch"
@@ -121,6 +121,8 @@ debuerreotype-minimizing-config "$rootfsDir"
 
 # Add loongnix security repo
 echo "deb http://pkg.loongnix.cn/loongnix/25/ loongnix-security main contrib non-free" > "$rootfsDir/etc/apt/sources.list.d/loongnix-25-security.list"
+cp -v $SCRIPT_DIR/../gpg/loongnix-archive-keyring.gpg "$rootfsDir/usr/share/keyrings/loongnix-archive-keyring.gpg"
+cp -v $SCRIPT_DIR/../gpg/loongnix-archive-keyring.gpg.asc "$rootfsDir/etc/apt/trusted.gpg.d/loongnix-archive-keyring.gpg.asc"
 
 # TODO do we need to update sources.list here? (security?)
 debuerreotype-apt-get "$rootfsDir" update -qq
