@@ -6,11 +6,7 @@ set -Eeuo pipefail
 # 	&& apt-get install -y ./valve.deb \
 # 	&& rm valve.deb
 
-debuerreotypeScriptsDir="$(which debuerreotype-init)"
-debuerreotypeScriptsDir="$(readlink -vf "$debuerreotypeScriptsDir")"
-debuerreotypeScriptsDir="$(dirname "$debuerreotypeScriptsDir")"
-
-source "$debuerreotypeScriptsDir/.constants.sh" \
+source "$DEBUERREOTYPE_DIRECTORY/scripts/.constants.sh" \
 	--flags 'arch:' \
 	-- \
 	'[--arch=<arch>] <output-dir> <suite>' \
@@ -57,7 +53,13 @@ initArgs=(
 	--exclude debian-archive-keyring
 )
 
-keyring='/usr/share/keyrings/valve-archive-keyring.gpg'
+if [ -s /usr/share/keyrings/valve-archive-keyring.pgp ]; then
+	# https://salsa.debian.org/release-team/debian-archive-keyring/-/commit/17c653ad964a3e81519f83e1d3a0704be737e4f6
+	# (which will hopefully happen for valve-archive-keyring eventually too 😭)
+	keyring='/usr/share/keyrings/valve-archive-keyring.pgp'
+else
+	keyring='/usr/share/keyrings/valve-archive-keyring.gpg'
+fi
 if [ -f "$keyring" ]; then
 	initArgs+=( --keyring "$keyring" )
 else
@@ -110,7 +112,7 @@ touch_epoch() {
 }
 touch_epoch "$rootfsDir/etc/apt/sources.list"
 
-aptVersion="$("$debuerreotypeScriptsDir/.apt-version.sh" "$rootfsDir")"
+aptVersion="$("$DEBUERREOTYPE_DIRECTORY/scripts/.apt-version.sh" "$rootfsDir")"
 if dpkg --compare-versions "$aptVersion" '>=' '1.1~'; then
 	debuerreotype-apt-get "$rootfsDir" full-upgrade -yqq
 else

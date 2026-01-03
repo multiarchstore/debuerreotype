@@ -1,11 +1,7 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
-debuerreotypeScriptsDir="$(which debuerreotype-init)"
-debuerreotypeScriptsDir="$(readlink -vf "$debuerreotypeScriptsDir")"
-debuerreotypeScriptsDir="$(dirname "$debuerreotypeScriptsDir")"
-
-source "$debuerreotypeScriptsDir/.constants.sh" \
+source "$DEBUERREOTYPE_DIRECTORY/scripts/.constants.sh" \
 	--flags 'codename-copy' \
 	--flags 'eol,ports' \
 	--flags 'arch:' \
@@ -77,7 +73,7 @@ for archive in '' security; do
 		mirrorArgs+=( --eol )
 	fi
 	mirrorArgs+=( "@$epoch" "$suite${archive:+-$archive}" "$dpkgArch" main )
-	if ! mirrors="$("$debuerreotypeScriptsDir/.debian-mirror.sh" "${mirrorArgs[@]}")"; then
+	if ! mirrors="$("$DEBUERREOTYPE_DIRECTORY/scripts/.debian-mirror.sh" "${mirrorArgs[@]}")"; then
 		if [ "$archive" = 'security' ]; then
 			# if we fail to find the security mirror, we're probably not security supported (which is ~fine)
 			continue
@@ -109,9 +105,10 @@ if [ -n "$ports" ]; then
 	)
 fi
 
+# TODO decouple this from GnuPG 🙈 (does "sop" have everything we need?)
 export GNUPGHOME="$tmpDir/gnupg"
 mkdir -p "$GNUPGHOME"
-keyring="$tmpDir/debian-archive-$suite-keyring.gpg"
+keyring="$tmpDir/debian-archive-$suite-keyring.pgp"
 if [ "$suite" = 'slink' ]; then
 	# slink (2.1) introduced apt, but without PGP 😅
 	initArgs+=( --no-check-gpg )
@@ -122,20 +119,27 @@ elif [ "$suite" = 'potato' ]; then
 		--recv-keys 8FD47FF1AA9372C37043DC28AA7DEB7B722F1AED
 	initArgs+=( --keyring "$keyring" )
 else
-	# check against all releases (ie, combine both "debian-archive-keyring.gpg" and "debian-archive-removed-keys.gpg"), since we cannot really know whether the target release became EOL later than the snapshot date we are targeting
+	# https://salsa.debian.org/release-team/debian-archive-keyring/-/commit/17c653ad964a3e81519f83e1d3a0704be737e4f6
+	if [ -s /usr/share/keyrings/debian-archive-keyring.pgp ]; then
+		ext='pgp'
+	else
+		ext='gpg'
+	fi
+	# check against all releases (ie, combine both "debian-archive-keyring.pgp" and "debian-archive-removed-keys.pgp"), since we cannot really know whether the target release became EOL later than the snapshot date we are targeting
 	gpg --batch --no-default-keyring --keyring "$keyring" --import \
-		/usr/share/keyrings/debian-archive-keyring.gpg \
-		/usr/share/keyrings/debian-archive-removed-keys.gpg
+		"/usr/share/keyrings/debian-archive-keyring.$ext" \
+		"/usr/share/keyrings/debian-archive-removed-keys.$ext"
 	if [ -n "$ports" ]; then
 		gpg --batch --no-default-keyring --keyring "$keyring" --import \
-			/usr/share/keyrings/debian-ports-archive-keyring.gpg \
-			/usr/share/keyrings/debian-ports-archive-keyring-removed.gpg
+			"/usr/share/keyrings/debian-ports-archive-keyring.$ext" \
+			"/usr/share/keyrings/debian-ports-archive-keyring-removed.$ext"
 	fi
 	initArgs+=( --keyring "$keyring" )
 fi
 
 mkdir -p "$tmpOutputDir"
 
+# TODO decouple this from gpgv (perhaps lean on sopv so the underlying implementation matters less?)
 mirror="$(< "$archDir/snapshot-url")"
 if [ -f "$keyring" ] && wget -O "$tmpOutputDir/InRelease" "$mirror/dists/$suite/InRelease"; then
 	gpgv \
@@ -172,6 +176,13 @@ fi
 if [ -n "$codenameCopy" ] && [ -z "$codename" ]; then
 	echo >&2 "error: --codename-copy specified but we failed to get a Codename for $suite"
 	exit 1
+fi
+
+if [ "${codename:-$suite}" = 'jessie' ]; then
+	# https://bugs.debian.org/764204 "apt-cache calls fcntl() on 65536 FDs"
+	# https://bugs.launchpad.net/bugs/1332440 "apt-get update very slow when ulimit -n is big"
+	ulimit -n 1024
+	# I contemplated/played with adding this to "debuerreotype-apt-get" instead with a test on aptVersion >= 1.0.9.2 and < 1.1~exp9 (for safety), but it's really needed during debootstrap too ("Configuring apt" / "Setting up apt" hangs), and jessie is the only Debian release affected, so this is a simpler/cleaner test anyhow
 fi
 
 # apply merged-/usr (for bookworm+)
@@ -213,7 +224,7 @@ fi
 rootfsDir="$tmpDir/rootfs"
 debuerreotype-init "${initArgs[@]}" "$rootfsDir" "$suite" "@$epoch"
 
-aptVersion="$("$debuerreotypeScriptsDir/.apt-version.sh" "$rootfsDir")"
+aptVersion="$("$DEBUERREOTYPE_DIRECTORY/scripts/.apt-version.sh" "$rootfsDir")"
 
 # regenerate sources.list to make the deb822/line-based opinion explicit
 # https://lists.debian.org/debian-devel/2021/11/msg00026.html
@@ -242,6 +253,7 @@ elif [ -s "$tmpDir/gpgv-status.txt" ] && grep -F '[GNUPG:] EXPKEYSIG ' "$tmpDir/
 fi
 
 if [ -n "$addGpgvIgnore" ]; then
+	# TODO in order for this to work, we *also* need to explicitly install "gpgv" (it's transitively-essential in bookworm and gone in trixie+)
 	debuerreotype-gpgv-ignore-expiration-config "$rootfsDir"
 fi
 

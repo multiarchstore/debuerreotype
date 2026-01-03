@@ -1,15 +1,15 @@
 # docker run --cap-add SYS_ADMIN --cap-drop SETFCAP --tmpfs /tmp:dev,exec,suid,noatime ...
 
 # bootstrapping a new architecture?
-#   ./scripts/debuerreotype-init /tmp/docker-rootfs bullseye now
+#   ./scripts/debuerreotype-init /tmp/docker-rootfs trixie now
 #   ./scripts/debuerreotype-minimizing-config /tmp/docker-rootfs
-#   ./scripts/debuerreotype-debian-sources-list /tmp/docker-rootfs bullseye
-#   ./scripts/debuerreotype-tar /tmp/docker-rootfs - | docker import - debian:bullseye-slim
+#   ./scripts/debuerreotype-debian-sources-list /tmp/docker-rootfs trixie
+#   ./scripts/debuerreotype-tar /tmp/docker-rootfs - | docker import - debian:trixie-slim
 # alternate:
-#   debootstrap --variant=minbase bullseye /tmp/docker-rootfs
-#   tar -cC /tmp/docker-rootfs . | docker import - debian:bullseye-slim
+#   debootstrap --variant=minbase trixie /tmp/docker-rootfs
+#   tar -cC /tmp/docker-rootfs . | docker import - debian:trixie-slim
 # (or your own favorite set of "debootstrap" commands to create a base image for building this one FROM)
-FROM debian:bullseye-slim
+FROM debian:trixie-slim
 
 RUN set -eux; \
 	apt-get update; \
@@ -20,6 +20,11 @@ RUN set -eux; \
 		xz-utils \
 		\
 		gnupg dirmngr \
+# add "gpgv" explicitly (for now) since it's transitively-essential in bookworm and gone in trixie+
+		gpgv \
+		\
+# used in oci-image.sh
+		jq pigz \
 	; \
 	rm -rf /var/lib/apt/lists/*
 
@@ -30,12 +35,19 @@ RUN echo 'hsts=0' >> "$WGETRC"
 # https://github.com/debuerreotype/debuerreotype/issues/100
 # https://tracker.debian.org/pkg/distro-info-data
 # http://snapshot.debian.org/package/distro-info-data/
-# http://snapshot.debian.org/package/distro-info-data/0.58/
+# http://snapshot.debian.org/package/distro-info-data/0.68/
 RUN set -eux; \
-	wget -O distro-info-data.deb 'http://snapshot.debian.org/archive/debian/20230429T210410Z/pool/main/d/distro-info-data/distro-info-data_0.58_all.deb'; \
-	echo '95dcdf68159f5fd64b678fa17c0f88f86389eb04 *distro-info-data.deb' | sha1sum --strict --check -; \
-	apt-get install -y ./distro-info-data.deb; \
+	wget -O distro-info-data.deb 'http://snapshot.debian.org/archive/debian/20251018T202603Z/pool/main/d/distro-info-data/distro-info-data_0.68_all.deb'; \
+	echo 'e9ae181a26235a46ff852cb3445752686b96ea83 *distro-info-data.deb' | sha1sum --strict --check -; \
+	\
+	versionEx="$(dpkg-query --show --showformat '${Version}\n' distro-info-data || :)"; \
+	versionDl="$(dpkg-deb --field distro-info-data.deb Version)"; \
+	if dpkg --compare-versions "$versionDl" '>>' "$versionEx"; then \
+# only install the version we just downloaded if it's actually newer than the version already installed (it gets frequent backports/stable updates and is installed as a dependency)
+		apt-get install -y ./distro-info-data.deb; \
+	fi; \
 	rm distro-info-data.deb; \
+	\
 	[ -s /usr/share/distro-info/debian.csv ]
 
 RUN set -eux; \
@@ -49,38 +61,15 @@ RUN set -eux; \
 	wget -O debootstrap-download-main.patch 'https://people.debian.org/~tianon/debootstrap-mr-63--download_main.patch'; \
 	echo 'ceae8f508a9b49236fa4519a44a584e6c774aa0e4446eb1551f3b69874a4cde5 *debootstrap-download-main.patch' | sha256sum --strict --check -; \
 	patch --input=debootstrap-download-main.patch /usr/share/debootstrap/functions; \
-	rm debootstrap-download-main.patch; \
-	\
-# https://salsa.debian.org/installer-team/debootstrap/-/merge_requests/76
-	if ! grep EXCLUDE_DEPENDENCY /usr/sbin/debootstrap; then \
-		wget -O debootstrap-exclude-usrmerge.patch 'https://people.debian.org/~tianon/debootstrap-mr-76--exclude-usrmerge.patch'; \
-		echo '4aae49edcd562d8f38bcbc00b26ae485f4e65dd36bd4a250a16cdb912398df7e *debootstrap-exclude-usrmerge.patch' | sha256sum --strict --check -; \
-		sed -ri \
-			-e 's!([ab])/debootstrap!\1/usr/sbin/debootstrap!g' \
-			-e 's!([ab])/scripts/debian-common!\1/usr/share/debootstrap/scripts/debian-common!g' \
-			debootstrap-exclude-usrmerge.patch \
-		; \
-		patch -p1 --input="$PWD/debootstrap-exclude-usrmerge.patch" --directory=/; \
-		rm debootstrap-exclude-usrmerge.patch; \
-	fi; \
-	\
-# https://salsa.debian.org/installer-team/debootstrap/-/merge_requests/81
-	if ! grep EXCLUDE_DEPENDENCY /usr/share/debootstrap/functions; then \
-		wget -O debootstrap-exclude-usrmerge-harder.patch 'https://people.debian.org/~tianon/debootstrap-mr-81--exclude-usrmerge-harder.patch'; \
-		echo 'ed65c633dd3128405193eef92355a27a3302dc0c558adf956f04af4500a004c9 *debootstrap-exclude-usrmerge-harder.patch' | sha256sum --strict --check -; \
-		sed -ri \
-			-e 's!([ab])/debootstrap!\1/usr/sbin/debootstrap!g' \
-			-e 's!([ab])/functions!\1/usr/share/debootstrap/functions!g' \
-			debootstrap-exclude-usrmerge-harder.patch \
-		; \
-		patch -p1 --input="$PWD/debootstrap-exclude-usrmerge-harder.patch" --directory=/; \
-		rm debootstrap-exclude-usrmerge-harder.patch; \
-	fi
+	rm debootstrap-download-main.patch
+
+# this env is a defined interface used by other scripts
+ENV DEBUERREOTYPE_DIRECTORY /opt/debuerreotype
 
 # see ".dockerignore"
-COPY . /opt/debuerreotype
+COPY . $DEBUERREOTYPE_DIRECTORY
 RUN set -eux; \
-	cd /opt/debuerreotype/scripts; \
+	cd "$DEBUERREOTYPE_DIRECTORY/scripts"; \
 	for f in debuerreotype-*; do \
 		ln -svL "$PWD/$f" "/usr/local/bin/$f"; \
 	done; \
@@ -90,16 +79,17 @@ RUN set -eux; \
 
 WORKDIR /tmp
 
-# a few example md5sum values for amd64:
 
-# debuerreotype-init --keyring /usr/share/keyrings/debian-archive-removed-keys.gpg test-stretch stretch 2017-05-08T00:00:00Z
+# a few example sha256sum values for amd64:
+
+# debuerreotype-init --keyring /usr/share/keyrings/debian-archive-removed-keys.pgp --no-merged-usr test-stretch stretch 2017-05-08T00:00:00Z
 # debuerreotype-tar test-stretch test-stretch.tar
-# md5sum test-stretch.tar
-#   694f02c53651673ebe094cae3bcbb06d
-# ./docker-run.sh sh -euxc 'debuerreotype-init --keyring /usr/share/keyrings/debian-archive-removed-keys.gpg /tmp/rootfs stretch 2017-05-08T00:00:00Z; debuerreotype-tar /tmp/rootfs - | md5sum'
+# sha256sum test-stretch.tar
+#   7b295f07692e13e3aaec0709e38f5fbfe3b7153d024c556430be70fd845fc174
+# ./docker-run.sh sh -euxc 'debuerreotype-init --keyring /usr/share/keyrings/debian-archive-removed-keys.pgp --no-merged-usr /tmp/rootfs stretch 2017-05-08T00:00:00Z; debuerreotype-tar /tmp/rootfs - | sha256sum'
 
-# debuerreotype-init --keyring /usr/share/keyrings/debian-archive-removed-keys.gpg test-jessie jessie 2017-05-08T00:00:00Z
+# debuerreotype-init --keyring /usr/share/keyrings/debian-archive-removed-keys.pgp --no-merged-usr test-jessie jessie 2017-05-08T00:00:00Z
 # debuerreotype-tar test-jessie test-jessie.tar
-# md5sum test-jessie.tar
-#   354cedd99c08d213d3493a7cf0aaaad6
-# ./docker-run.sh sh -euxc 'debuerreotype-init --keyring /usr/share/keyrings/debian-archive-removed-keys.gpg /tmp/rootfs jessie 2017-05-08T00:00:00Z; debuerreotype-tar /tmp/rootfs - | md5sum'
+# sha256sum test-jessie.tar
+#   5d1daeb8e817a56d28b65b4fa5eb09ebb1963299a0ccfd2a37c07560779653cd
+# ./docker-run.sh sh -euxc 'debuerreotype-init --keyring /usr/share/keyrings/debian-archive-removed-keys.pgp --no-merged-usr /tmp/rootfs jessie 2017-05-08T00:00:00Z; debuerreotype-tar /tmp/rootfs - | sha256sum'
